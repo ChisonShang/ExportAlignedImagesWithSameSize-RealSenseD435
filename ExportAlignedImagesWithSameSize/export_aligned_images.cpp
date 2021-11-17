@@ -82,6 +82,7 @@ int main(int argc, char* argv[]) try
     if (sensor && sensor.is<rs2::depth_stereo_sensor>())
     {
         sensor.set_option(RS2_OPTION_VISUAL_PRESET, RS2_RS400_VISUAL_PRESET_HIGH_DENSITY);
+        //sensor.set_option(RS2_OPTION_VISUAL_PRESET, RS2_RS400_VISUAL_PRESET_HIGH_ACCURACY);
     }
 
     // Define two align objects. One will be used to align
@@ -117,7 +118,7 @@ int main(int argc, char* argv[]) try
                 //根据深度进行裁剪
                 rs2::video_frame color_frame = frameset.get_color_frame();
                 rs2::depth_frame depth_frame = frameset.get_depth_frame();
-                float depth_clipping_distance = 2.f;
+                float depth_clipping_distance = 0.7f;
                 float depth_scale = get_depth_scale(profile.get_device());
                 remove_background(color_frame, depth_frame, depth_scale, depth_clipping_distance);
                 //
@@ -363,6 +364,7 @@ void remove_background(rs2::video_frame& other_frame, const rs2::depth_frame& de
             // 检查深度值是否大于阈值
             if (pixels_distance <= 0.f || pixels_distance > clipping_dist)
             {
+                /*p_depth_frame[depth_pixel_index] = clipping_dist / depth_scale;*/
                 p_depth_frame[depth_pixel_index] = 0;
             }
         }
