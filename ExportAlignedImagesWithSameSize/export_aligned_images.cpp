@@ -8,6 +8,8 @@
 #include <iostream>             // Terminal IO
 #include <sstream>              // Stringstreams
 
+#include <objbase.h>
+
 // 3rd party header for writing png files
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -37,10 +39,22 @@ enum class direction
 };
 
 // Forward definition of UI rendering, implemented below
-void render_slider(rect location, float* alpha, direction* dir);
+void render_slider(rect location, float* alpha, direction* dir, bool& ifrecord);
+void render_button(rect location, float* alpha, direction* dir);
 void remove_background_without_depth(rs2::video_frame& other, const rs2::depth_frame& depth_frame, float depth_scale, float clipping_dist);
 void remove_background(rs2::video_frame& other, const rs2::depth_frame& depth_frame, float depth_scale, float clipping_dist);
 float get_depth_scale(rs2::device dev);
+
+std::string GuidToString(const GUID& guid)
+{
+    char buf[64] = { 0 };
+    sprintf_s(buf, sizeof(buf),
+        "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        guid.Data1, guid.Data2, guid.Data3,
+        guid.Data4[0], guid.Data4[1], guid.Data4[2], guid.Data4[3],
+        guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7]);
+    return std::string(buf);
+}
 
 int main(int argc, char* argv[]) try
 {
@@ -79,6 +93,7 @@ int main(int argc, char* argv[]) try
 
     float       alpha = 0.5f;               // Transparancy coefficient
     direction   dir = direction::to_depth;  // Alignment direction
+    bool ifrecord = false;
 
     while (app) // Application still alive?
     {
@@ -97,51 +112,61 @@ int main(int argc, char* argv[]) try
         {
             // Align all frames to color viewport
             frameset = align_to_color.process(frameset);
-
-            //根据深度进行裁剪
-            rs2::video_frame color_frame = frameset.get_color_frame();
-            rs2::depth_frame depth_frame = frameset.get_depth_frame();
-            float depth_clipping_distance = 2.f;
-            float depth_scale = get_depth_scale(profile.get_device());
-            remove_background(color_frame, depth_frame, depth_scale, depth_clipping_distance);
-            //
-
-            //更改，根据color image导出
-            rs2::colorizer color_map(2);  //2或3较好
-            /**
-            * Create colorizer processing block
-            * Colorizer generate color image base on input depth frame
-            * \param[in] color_scheme - select one of the available color schemes:
-            *                           0 - Jet
-            *                           1 - Classic
-            *                           2 - WhiteToBlack
-            *                           3 - BlackToWhite
-            *                           4 - Bio
-            *                           5 - Cold
-            *                           6 - Warm
-            *                           7 - Quantized
-            *                           8 - Pattern
-            *                           9 - Hue
-            */
-
-            for (auto&& frame : frameset)
+            if (ifrecord == true)
             {
-                if (auto vf = frame.as<rs2::video_frame>())
+                //根据深度进行裁剪
+                rs2::video_frame color_frame = frameset.get_color_frame();
+                rs2::depth_frame depth_frame = frameset.get_depth_frame();
+                float depth_clipping_distance = 2.f;
+                float depth_scale = get_depth_scale(profile.get_device());
+                remove_background(color_frame, depth_frame, depth_scale, depth_clipping_distance);
+                //
+
+                //更改，根据color image导出
+                rs2::colorizer color_map(2);  //2或3较好
+                /**
+                * Create colorizer processing block
+                * Colorizer generate color image base on input depth frame
+                * \param[in] color_scheme - select one of the available color schemes:
+                *                           0 - Jet
+                *                           1 - Classic
+                *                           2 - WhiteToBlack
+                *                           3 - BlackToWhite
+                *                           4 - Bio
+                *                           5 - Cold
+                *                           6 - Warm
+                *                           7 - Quantized
+                *                           8 - Pattern
+                *                           9 - Hue
+                */
+                //生成guid
+                GUID guid;
+                std::string ans;
+                HRESULT h = CoCreateGuid(&guid);
+                if (h == S_OK)
+                    ans = GuidToString(guid);
+                else
+                    throw std::runtime_error("generate guid failed!");
+                for (auto&& frame : frameset)
                 {
-                    //auto vf = frameset.as<rs2::video_frame>();
-                    auto stream = frame.get_profile().stream_type();
-                    // Use the colorizer to get an rgb image for the depth stream
-                    if (vf.is<rs2::depth_frame>()) vf = color_map.process(frame);
-                    // Write images to disk
-                    std::stringstream png_file;
-                    png_file << "rs-save-to-disk-output-" << vf.get_profile().stream_name() << ".png";
-                    stbi_write_png(png_file.str().c_str(), vf.get_width(), vf.get_height(),
-                        vf.get_bytes_per_pixel(), vf.get_data(), vf.get_stride_in_bytes());
-                    std::cout << "Saved " << png_file.str() << std::endl;
+                    if (auto vf = frame.as<rs2::video_frame>())
+                    {
+                        //auto vf = frameset.as<rs2::video_frame>();
+                        auto stream = frame.get_profile().stream_type();
+                        // Use the colorizer to get an rgb image for the depth stream
+                        if (vf.is<rs2::depth_frame>()) vf = color_map.process(frame);
+                        // Write images to disk
+                        std::stringstream png_file;
+                        png_file << ans << "rs-save-to-disk-output-" << vf.get_profile().stream_name()<< ".png";
+                        stbi_write_png(png_file.str().c_str(), vf.get_width(), vf.get_height(),
+                            vf.get_bytes_per_pixel(), vf.get_data(), vf.get_stride_in_bytes());
+                        std::cout << "Saved " << png_file.str() << std::endl;
+                    }
                 }
+                //pipe.stop();
+                ifrecord = false;
             }
-            pipe.stop();
-            
+           //pipe.start();
         }
 
         // With the aligned frameset we proceed as usual
@@ -173,7 +198,8 @@ int main(int argc, char* argv[]) try
 
         // Render the UI:
         ImGui_ImplGlfw_NewFrame(1);
-        render_slider({ 15.f, app.height() - 60, app.width() - 30, app.height() }, &alpha, &dir);
+        render_slider({ 15.f, app.height() - 80, app.width() - 30, app.height() }, &alpha, &dir, ifrecord);
+        //render_button(&alpha, &dir, app);
         ImGui::Render();
     }
 
@@ -190,7 +216,7 @@ catch (const std::exception& e)
     return EXIT_FAILURE;
 }
 
-void render_slider(rect location, float* alpha, direction* dir)
+void render_slider(rect location, float* alpha, direction* dir, bool &ifrecord)
 {
     static const int flags = ImGuiWindowFlags_NoCollapse
         | ImGuiWindowFlags_NoScrollbar
@@ -214,6 +240,11 @@ void render_slider(rect location, float* alpha, direction* dir)
     bool to_depth = (*dir == direction::to_depth);
     bool to_color = (*dir == direction::to_color);
 
+    if (ImGui::Button("record"))
+    {
+        ifrecord = true;
+    }
+
     if (ImGui::Checkbox("Align To Depth", &to_depth))
     {
         *dir = to_depth ? direction::to_depth : direction::to_color;
@@ -224,6 +255,28 @@ void render_slider(rect location, float* alpha, direction* dir)
     {
         *dir = to_color ? direction::to_color : direction::to_depth;
     }
+
+    //ImGui::SameLine();
+    //ImGui::SetCursorPos({ 1280 / 2 - 100, 3 * 720 / 5 + 110 });
+    //ImGui::SetCursorPosY(location.h - 100);
+    
+    /////**************************************/
+    /////**************************************/
+    //// Set options for the ImGui buttons
+    //ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, { 1, 1, 1, 1 });
+    //ImGui::PushStyleColor(ImGuiCol_Button, { 36 / 255.f, 44 / 255.f, 51 / 255.f, 1 });
+    //ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 40 / 255.f, 170 / 255.f, 90 / 255.f, 1 });
+    //ImGui::PushStyleColor(ImGuiCol_ButtonActive, { 36 / 255.f, 44 / 255.f, 51 / 255.f, 1 });
+    //ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12);
+
+    //ImGui::SetCursorPos({ 1280 / 2 - 100, 3 * 720 / 5 + 90 });
+    //ImGui::Text("Click 'record' to start recording");
+    //ImGui::SetCursorPos({ 1280 / 2 - 100, 3 * 720 / 5 + 110 });
+
+
+    /////**************************************/
+    /////**************************************/
+
 
     ImGui::End();
 }
@@ -329,4 +382,67 @@ float get_depth_scale(rs2::device dev)
         }
     }
     throw std::runtime_error("Device does not have a depth sensor");
+}
+
+
+void render_button(rect location, float* alpha, direction* dir)
+{
+    static const int flags = ImGuiWindowFlags_NoCollapse
+        | ImGuiWindowFlags_NoScrollbar
+        | ImGuiWindowFlags_NoSavedSettings
+        | ImGuiWindowFlags_NoTitleBar
+        | ImGuiWindowFlags_NoResize
+        | ImGuiWindowFlags_NoMove;
+
+    ImGui::SetNextWindowSize({ location.w, location.h });
+
+    // Render transparency slider:
+    ImGui::Begin("app", nullptr, flags);
+
+    // Set options for the ImGui buttons
+    ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, { 1, 1, 1, 1 });
+    ImGui::PushStyleColor(ImGuiCol_Button, { 36 / 255.f, 44 / 255.f, 51 / 255.f, 1 });
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 40 / 255.f, 170 / 255.f, 90 / 255.f, 1 });
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, { 36 / 255.f, 44 / 255.f, 51 / 255.f, 1 });
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12);
+
+    ImGui::SetCursorPos({ 1280 / 2 - 100, 3 * 720 / 5 + 90 });
+    ImGui::Text("Click 'record' to start recording");
+    ImGui::SetCursorPos({ 1280 / 2 - 100, 3 * 720 / 5 + 110 });
+    ImGui::Button("record", { 50, 50 });
+
+    //if (ImGui::Button("record", { 50, 50 }))
+    //{
+    //    if (*dir == direction::to_color)
+    //    {
+    //        //根据深度进行裁剪
+    //        rs2::video_frame color_frame = frameset.get_color_frame();
+    //        rs2::depth_frame depth_frame = frameset.get_depth_frame();
+    //        float depth_clipping_distance = 2.f;
+    //        float depth_scale = get_depth_scale(profile.get_device());
+    //        remove_background(color_frame, depth_frame, depth_scale, depth_clipping_distance);
+
+    //        //更改，根据color image导出
+    //        rs2::colorizer color_map(2);  //2或3较好
+    //        for (auto&& frame : frameset)
+    //        {
+    //            if (auto vf = frame.as<rs2::video_frame>())
+    //            {
+    //                //auto vf = frameset.as<rs2::video_frame>();
+    //                auto stream = frame.get_profile().stream_type();
+    //                // Use the colorizer to get an rgb image for the depth stream
+    //                if (vf.is<rs2::depth_frame>()) vf = color_map.process(frame);
+    //                // Write images to disk
+    //                std::stringstream png_file;
+    //                png_file << "rs-save-to-disk-output-" << vf.get_profile().stream_name() << ".png";
+    //                stbi_write_png(png_file.str().c_str(), vf.get_width(), vf.get_height(),
+    //                    vf.get_bytes_per_pixel(), vf.get_data(), vf.get_stride_in_bytes());
+    //                std::cout << "Saved " << png_file.str() << std::endl;
+    //            }
+    //        }
+    //        pipe.stop();
+    //    }
+    //}
+
+    ImGui::End();
 }
